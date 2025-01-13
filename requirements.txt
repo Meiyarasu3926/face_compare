@@ -11,3 +11,4 @@ passlib[bcrypt]==1.7.4
 aiofiles==23.2.1
 tf-keras
 opencv-python-headless
+mysql-connector-python==8.3.0
