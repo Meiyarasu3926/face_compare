@@ -5,8 +5,9 @@ services:
     build: .
     container_name: face-recognition-api
     ports:
-      - "4000:4000"
+      - "${PORT:-4000}:${PORT:-4000}"
     environment:
+      - PORT=${PORT:-4000}
       - TIDB_HOST=${TIDB_HOST}
       - TIDB_PORT=${TIDB_PORT:-4000}
       - TIDB_USER=${TIDB_USER}
@@ -18,7 +19,7 @@ services:
       - temp-storage:/tmp
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:4000/"]
+      test: ["CMD", "curl", "-f", "http://localhost:${PORT:-4000}/"]
       interval: 30s
       timeout: 10s
       retries: 3
