@@ -4,7 +4,7 @@ pillow==10.2.0
 numpy==1.26.4
 opencv-python==4.9.0.80
 scikit-learn==1.4.0
-deepface==0.0.87
+deepface==0.0.75
 uvicorn[standard]==0.27.1
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
