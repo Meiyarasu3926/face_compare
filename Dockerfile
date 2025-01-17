@@ -47,5 +47,5 @@ EXPOSE ${PORT}
 ENV PYTHONMALLOC=malloc
 ENV MALLOC_TRIM_THRESHOLD_=100000
 
-# Command to run the application
-CMD uvicorn main:app --host 0.0.0.0 --port ${PORT} --workers 1 --limit-concurrency 1
+# Command to run the application with optimized settings
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT} --workers 2 --limit-concurrency 10 --backlog 8
