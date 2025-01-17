@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  face-recognition-api:
+    build: .
+    container_name: face-recognition-api
+    ports:
+      - "4000:4000"
+    environment:
+      - TIDB_HOST=${TIDB_HOST}
+      - TIDB_PORT=${TIDB_PORT:-4000}
+      - TIDB_USER=${TIDB_USER}
+      - TIDB_PASSWORD=${TIDB_PASSWORD}
+      - TIDB_DATABASE=${TIDB_DATABASE}
+      - DB_POOL_SIZE=${DB_POOL_SIZE:-5}
+    volumes:
+      - ./static:/app/static
+      - temp-storage:/tmp
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  temp-storage:
