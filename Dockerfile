@@ -19,6 +19,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Set environment variable to disable GPU
 ENV CUDA_VISIBLE_DEVICES="-1"
 
+ENV TF_ENABLE_ONEDNN_OPTS=0
+ENV TF_FORCE_GPU_ALLOW_GROWTH=true
+
+
 # Copy the rest of the application
 COPY . .
 
