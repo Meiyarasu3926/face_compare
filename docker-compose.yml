@@ -17,6 +17,12 @@ services:
     volumes:
       - ./static:/app/static
       - temp-storage:/tmp
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+        reservations:
+          memory: 1G
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:${PORT:-4000}/"]
