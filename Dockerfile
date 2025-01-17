@@ -44,14 +44,14 @@ RUN mkdir -p /tmp && chmod 777 /tmp
 EXPOSE ${PORT}
 
 # Add initialization script
-COPY <<EOF /app/init.sh
+COPY <<EOF init.sh
 #!/bin/sh
 export TF_XLA_FLAGS=--tf_xla_enable_xla_devices=false
 export XLA_FLAGS=--xla_gpu_cuda_data_dir=""
 exec uvicorn main:app --host 0.0.0.0 --port ${PORT} --workers 1
 EOF
 
-RUN chmod +x /app/init.sh
+RUN chmod +x init.sh
 
 # Command to run the application with dynamic port
-CMD ["/app/init.sh"]
+CMD ["init.sh"]
