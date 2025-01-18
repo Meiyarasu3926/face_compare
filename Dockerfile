@@ -16,9 +16,6 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Uninstall TensorFlow (if installed) and install tensorflow-cpu
-RUN pip uninstall -y tensorflow && pip install tensorflow-cpu
-
 # Set environment variable to disable GPU
 ENV CUDA_VISIBLE_DEVICES="-1"
 
