@@ -22,6 +22,7 @@ import time
 
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 
 # Load environment variables
 load_dotenv()
