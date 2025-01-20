@@ -20,6 +20,9 @@ from dotenv import load_dotenv
 import ssl
 import time
 
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+
 # Load environment variables
 load_dotenv()
 
