@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 
-RUN pip install --upgrade setuptools pip wheel
+RUN python3 -m pip install --upgrade setuptools pip wheel
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
