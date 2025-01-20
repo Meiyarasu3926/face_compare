@@ -12,9 +12,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgl1-mesa-glx \
     libglib2.0-0 \
 
-# Set working directory
-WORKDIR /app
-
 # Upgrade pip and install basic Python packages
 RUN python3 -m pip install --upgrade setuptools pip wheel
 
