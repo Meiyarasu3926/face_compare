@@ -1,15 +1,20 @@
-# Use Python 3.9 slim image
-FROM python:3.9-slim
+# Use NVIDIA CUDA base image instead of plain Python
+FROM nvidia/cuda:11.8.0-runtime-ubuntu22.04
+
+# Install Python 3.9 and required system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.9 \
+    python3-pip \
+    python3.9-dev \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    nvidia-cuda-toolkit \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies required for OpenCV and other packages
-RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
-
+# Upgrade pip and install basic Python packages
 RUN python3 -m pip install --upgrade setuptools pip wheel
 
 # Copy requirements first to leverage Docker cache
@@ -17,9 +22,6 @@ COPY requirements.txt .
 
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
-
-# Set environment variable to disable GPU
-ENV CUDA_VISIBLE_DEVICES="-1"
 
 # Copy the rest of the application
 COPY . .
