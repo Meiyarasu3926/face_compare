@@ -1,19 +1,14 @@
-# Use NVIDIA CUDA development image which includes CUDA toolkit
-FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
+# Use Python 3.9 slim image
+FROM python:3.9-slim
 
-# Avoid prompts from apt
-ENV DEBIAN_FRONTEND=noninteractive
+# Set working directory
+WORKDIR /app
 
-# Install system dependencies and Python
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.9 \
-    python3-pip \
-    python3.9-dev \
+# Install system dependencies required for OpenCV and other packages
+RUN apt-get update && apt-get install -y \
     libgl1-mesa-glx \
     libglib2.0-0 \
-
-# Upgrade pip and install basic Python packages
-RUN python3 -m pip install --upgrade setuptools pip wheel
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
@@ -21,15 +16,14 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Set environment variable to disable GPU
+ENV CUDA_VISIBLE_DEVICES="-1"
+
 # Copy the rest of the application
 COPY . .
 
 # Create temp directory for file uploads
 RUN mkdir -p /tmp && chmod 777 /tmp
-
-# CUDA paths are already set in the base image
-# but we can verify them with:
-RUN nvcc --version
 
 # Expose port
 EXPOSE 4000
