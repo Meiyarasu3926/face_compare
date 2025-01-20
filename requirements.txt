@@ -15,5 +15,4 @@ mysql-connector-python==8.3.0
 python-dotenv==1.0.1
 tensorflow-cpu
 cryptography==42.0.2
-nvidia-pyindex
-nvidia-cuda-runtime-cu12
+
