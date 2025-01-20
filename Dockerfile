@@ -10,8 +10,6 @@ RUN apt-get update && apt-get install -y \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN apt-get install cuda-toolkit
-
 RUN python3 -m pip install --upgrade setuptools pip wheel
 
 # Copy requirements first to leverage Docker cache
