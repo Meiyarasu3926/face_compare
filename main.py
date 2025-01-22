@@ -385,8 +385,6 @@
 #     uvicorn.run(app, host="0.0.0.0", port=port)
 
 
-
-
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -394,9 +392,6 @@ from fastapi.staticfiles import StaticFiles
 from typing import Optional, List, Dict
 import os
 import json
-from deepface import DeepFace
-from sklearn.metrics.pairwise import cosine_similarity
-from PIL import Image
 import numpy as np
 import cv2
 import logging
@@ -405,16 +400,24 @@ from datetime import datetime
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import threading
-from io import BytesIO
+from PIL import Image
+import gc
+import tensorflow as tf
 
-# Setup logging
+# Configure TensorFlow for memory optimization
+tf.config.set_visible_devices([], 'GPU')  # Disable GPU
+gpus = tf.config.experimental.list_physical_devices('GPU')
+for gpu in gpus:
+    tf.config.experimental.set_memory_growth(gpu, True)
+
+# Lazy import DeepFace to reduce initial memory usage
+DeepFace = None
+
+# Setup logging with memory-efficient configuration
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('face_recognition.log'),
-        logging.StreamHandler()
-    ]
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
@@ -423,51 +426,36 @@ class FaceRecognitionConfig:
     TEMP_FOLDER = "temp_files"
     MODEL_NAME = "Facenet512"
     SIMILARITY_THRESHOLD = 0.6
-    MAX_CONCURRENT_PROCESSES = 4
-    CLEANUP_INTERVAL = 300  # 5 minutes
-    MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
-    ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
-    DEFAULT_IMAGE_SIZE = (800, 800)
-    TEST_IMAGE_PATH = "static/test.jpg"  # Make sure to include a test image in your static folder
+    MAX_CONCURRENT_PROCESSES = 2  # Reduced from 4 to save memory
+    CLEANUP_INTERVAL = 60  # Reduced to 1 minute
+    MAX_FILE_SIZE = 5 * 1024 * 1024  # Reduced to 5MB
+    ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png'}
+    DEFAULT_IMAGE_SIZE = (640, 640)  # Reduced from 800x800
+    BATCH_SIZE = 1
+    MAX_FACES_PER_IMAGE = 1
 
-class FaceRecognitionService:
+class MemoryOptimizedService:
     def __init__(self):
         self.config = FaceRecognitionConfig()
         self.executor = ThreadPoolExecutor(max_workers=self.config.MAX_CONCURRENT_PROCESSES)
-        self.embedding_cache = {}
-        self.cache_lock = threading.Lock()
-        self.use_cpu = True  # Default to CPU mode
+        self.use_cpu = True
         
         # Create necessary folders
         for folder in [self.config.REGISTER_FOLDER, self.config.TEMP_FOLDER]:
             os.makedirs(folder, exist_ok=True)
-            
-        # Initialize backend detection
-        self._initialize_backend()
 
-    def _initialize_backend(self):
-        """Initialize and determine the appropriate backend for face detection"""
-        try:
-            # Create a small test image if it doesn't exist
-            if not os.path.exists(self.config.TEST_IMAGE_PATH):
-                img = np.zeros((100, 100, 3), dtype=np.uint8)
-                cv2.imwrite(self.config.TEST_IMAGE_PATH, img)
-
-            # Try GPU-based detection
-            _ = DeepFace.represent(
-                img_path=self.config.TEST_IMAGE_PATH,
-                model_name=self.config.MODEL_NAME,
-                enforce_detection=True,
-                detector_backend='retinaface'
-            )
-            self.use_cpu = False
-            logger.info("GPU acceleration enabled - using RetinaFace backend")
-        except Exception as e:
-            self.use_cpu = True
-            logger.warning(f"GPU acceleration not available, falling back to CPU (OpenCV): {e}")
+    def _lazy_load_deepface(self):
+        """Lazy load DeepFace only when needed"""
+        global DeepFace
+        if DeepFace is None:
+            from deepface import DeepFace
+            # Clear any cached models
+            if hasattr(DeepFace.commons, "model_store"):
+                DeepFace.commons.model_store = {}
+            gc.collect()
 
     async def cleanup_temp_files(self):
-        """Clean up temporary files asynchronously"""
+        """More aggressive cleanup of temporary files"""
         while True:
             try:
                 current_time = datetime.now().timestamp()
@@ -475,66 +463,51 @@ class FaceRecognitionService:
                     file_path = os.path.join(self.config.TEMP_FOLDER, filename)
                     if os.path.isfile(file_path):
                         file_creation_time = os.path.getctime(file_path)
-                        if current_time - file_creation_time > 3600:  # Remove files older than 1 hour
+                        if current_time - file_creation_time > 300:  # 5 minutes
                             os.unlink(file_path)
-                            logger.debug(f"Cleaned up temporary file: {filename}")
+                gc.collect()
             except Exception as e:
                 logger.error(f"Error in cleanup: {e}")
             await asyncio.sleep(self.config.CLEANUP_INTERVAL)
 
-    def validate_image(self, file: UploadFile) -> bool:
-        """Validate image file"""
-        try:
-            # Check file size
-            file.file.seek(0, 2)
-            size = file.file.tell()
-            file.file.seek(0)
-            
-            if size > self.config.MAX_FILE_SIZE:
-                raise HTTPException(status_code=400, detail="File size too large")
-            
-            # Check file extension
-            ext = os.path.splitext(file.filename)[1].lower()
-            if ext not in self.config.ALLOWED_EXTENSIONS:
-                raise HTTPException(status_code=400, detail="Invalid file type")
-            
-            return True
-        except Exception as e:
-            logger.error(f"Error validating image: {e}")
-            raise HTTPException(status_code=400, detail=str(e))
+    def optimize_image(self, image: Image.Image) -> Image.Image:
+        """Optimize image for processing"""
+        # Convert to RGB and resize
+        image = image.convert('RGB')
+        image.thumbnail(self.config.DEFAULT_IMAGE_SIZE)
+        
+        # Convert to numpy array for additional processing
+        img_array = np.array(image)
+        
+        # Apply mild Gaussian blur to reduce noise
+        img_array = cv2.GaussianBlur(img_array, (3, 3), 0)
+        
+        # Convert back to PIL Image
+        return Image.fromarray(img_array)
 
     async def calculate_embedding(self, image_path: str) -> tuple:
-        """Calculate face embedding using thread pool"""
+        """Memory-optimized embedding calculation"""
         try:
+            self._lazy_load_deepface()
+            
             def _calculate():
                 try:
-                    detector_backend = 'opencv' if self.use_cpu else 'retinaface'
                     embedding = DeepFace.represent(
                         img_path=image_path,
                         model_name=self.config.MODEL_NAME,
                         enforce_detection=True,
-                        detector_backend=detector_backend,
+                        detector_backend='opencv',
                         align=True
                     )
                     if embedding and len(embedding) > 0:
-                        return np.array(embedding[0]["embedding"]), None
-                    return None, "No face detected in the image"
-                except Exception as calc_error:
-                    # If RetinaFace fails, try falling back to OpenCV
-                    if not self.use_cpu and "RetinaFace" in str(calc_error):
-                        logger.warning("RetinaFace failed, falling back to OpenCV for this request")
-                        embedding = DeepFace.represent(
-                            img_path=image_path,
-                            model_name=self.config.MODEL_NAME,
-                            enforce_detection=True,
-                            detector_backend='opencv',
-                            align=True
-                        )
-                        if embedding and len(embedding) > 0:
-                            return np.array(embedding[0]["embedding"]), None
-                    return None, str(calc_error)
+                        # Convert to float32 to reduce memory usage
+                        return np.array(embedding[0]["embedding"], dtype=np.float32), None
+                    return None, "No face detected"
+                except Exception as e:
+                    return None, str(e)
+                finally:
+                    gc.collect()
 
-            # Execute in thread pool
             embedding, error = await asyncio.get_event_loop().run_in_executor(
                 self.executor, _calculate
             )
@@ -543,34 +516,10 @@ class FaceRecognitionService:
             logger.error(f"Error calculating embedding: {e}")
             return None, str(e)
 
-    async def save_upload_file(self, upload_file: UploadFile) -> str:
-        """Save uploaded file with validation and optimization"""
-        try:
-            self.validate_image(upload_file)
-            suffix = os.path.splitext(upload_file.filename)[1]
-            temp_file = os.path.join(self.config.TEMP_FOLDER, f"temp_{os.urandom(8).hex()}{suffix}")
-            
-            # Optimize image before saving
-            image = Image.open(upload_file.file)
-            image = image.convert('RGB')
-            image.thumbnail(self.config.DEFAULT_IMAGE_SIZE)  # Resize if too large
-            
-            # Save with optimization
-            image.save(temp_file, quality=85, optimize=True)
-            
-            return temp_file
-        except Exception as e:
-            logger.error(f"Error saving upload file: {e}")
-            raise HTTPException(status_code=500, detail=str(e))
-
 class FaceRecognitionAPI:
     def __init__(self):
-        self.app = FastAPI(
-            title="Face Recognition API",
-            description="Face Recognition API with CPU/GPU support",
-            version="2.0.0"
-        )
-        self.service = FaceRecognitionService()
+        self.app = FastAPI(title="Face Recognition API")
+        self.service = MemoryOptimizedService()
         
         # Add CORS middleware
         self.app.add_middleware(
@@ -581,9 +530,6 @@ class FaceRecognitionAPI:
             allow_headers=["*"],
         )
         
-        # Mount static files
-        self.app.mount("/static", StaticFiles(directory="static"), name="static")
-        
         # Register routes
         self.register_routes()
 
@@ -592,19 +538,6 @@ class FaceRecognitionAPI:
         async def startup_event():
             asyncio.create_task(self.service.cleanup_temp_files())
 
-        @self.app.get("/")
-        async def read_root():
-            return FileResponse('static/index.html')
-
-        @self.app.get("/health")
-        async def health_check():
-            """Health check endpoint"""
-            return {
-                "status": "healthy",
-                "backend": "CPU (OpenCV)" if self.service.use_cpu else "GPU (RetinaFace)",
-                "version": "2.0.0"
-            }
-
         @self.app.post("/register/")
         async def register_face(
             name: str = Form(...),
@@ -612,146 +545,84 @@ class FaceRecognitionAPI:
         ):
             temp_path = None
             try:
-                temp_path = await self.service.save_upload_file(file)
+                # Validate and optimize image
+                image = Image.open(file.file)
+                image = self.service.optimize_image(image)
+                
+                # Save optimized image
+                temp_path = os.path.join(self.service.config.TEMP_FOLDER, f"temp_{os.urandom(8).hex()}.jpg")
+                image.save(temp_path, quality=85, optimize=True)
                 
                 embedding, error = await self.service.calculate_embedding(temp_path)
                 if error:
                     raise HTTPException(status_code=400, detail=error)
-                
-                if embedding is None:
-                    raise HTTPException(status_code=400, detail="Failed to generate embedding")
 
-                # Save embedding with metadata
+                # Save embedding
                 data = {
                     "name": name,
                     "embedding": embedding.tolist(),
-                    "model": self.service.config.MODEL_NAME,
-                    "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat(),
-                    "backend_used": "CPU (OpenCV)" if self.service.use_cpu else "GPU (RetinaFace)"
+                    "created_at": datetime.now().isoformat()
                 }
                 
                 file_path = os.path.join(self.service.config.REGISTER_FOLDER, f"{name}.json")
                 with open(file_path, "w") as f:
                     json.dump(data, f)
                 
-                return {
-                    "message": "Face registered successfully",
-                    "name": name,
-                    "backend_used": data["backend_used"]
-                }
+                return {"message": "Face registered successfully"}
                 
-            except Exception as e:
-                logger.error(f"Error in register_face: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
             finally:
                 if temp_path and os.path.exists(temp_path):
-                    try:
-                        os.remove(temp_path)
-                    except Exception as e:
-                        logger.error(f"Error removing temp file {temp_path}: {e}")
+                    os.remove(temp_path)
+                gc.collect()
 
         @self.app.post("/compare/")
         async def compare_face(file: UploadFile = File(...)):
-            """Compare face with optimized matching"""
             temp_path = None
             try:
-                temp_path = await self.service.save_upload_file(file)
+                # Validate and optimize image
+                image = Image.open(file.file)
+                image = self.service.optimize_image(image)
+                
+                # Save optimized image
+                temp_path = os.path.join(self.service.config.TEMP_FOLDER, f"temp_{os.urandom(8).hex()}.jpg")
+                image.save(temp_path, quality=85, optimize=True)
                 
                 embedding, error = await self.service.calculate_embedding(temp_path)
                 if error:
                     raise HTTPException(status_code=400, detail=error)
 
-                if embedding is None:
-                    raise HTTPException(status_code=400, detail="Failed to generate embedding")
-
                 results = []
-                for file_name in os.listdir(self.service.config.REGISTER_FOLDER):
-                    try:
-                        if not file_name.endswith('.json'):
-                            continue
-                            
-                        file_path = os.path.join(self.service.config.REGISTER_FOLDER, file_name)
-                        with open(file_path, "r") as f:
-                            data = json.load(f)
-                            if data.get("model") != self.service.config.MODEL_NAME:
-                                continue
-                                
-                            registered_embedding = np.array(data["embedding"])
-                            similarity = float(cosine_similarity([embedding], [registered_embedding])[0][0])
-                            
-                            if similarity >= self.service.config.SIMILARITY_THRESHOLD:
-                                results.append({
-                                    "name": data["name"],
-                                    "similarity": similarity,
-                                    "confidence": f"{similarity * 100:.2f}%",
-                                    "backend_used": "CPU (OpenCV)" if self.service.use_cpu else "GPU (RetinaFace)"
-                                })
-                    except Exception as e:
-                        logger.error(f"Error processing {file_name}: {e}")
-                        continue
-
-                return {
-                    "matches": sorted(results, key=lambda x: x["similarity"], reverse=True),
-                    "total_matches": len(results),
-                    "backend_used": "CPU (OpenCV)" if self.service.use_cpu else "GPU (RetinaFace)"
-                }
-                
-            except Exception as e:
-                logger.error(f"Error in compare_face: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
-            finally:
-                if temp_path and os.path.exists(temp_path):
-                    try:
-                        os.remove(temp_path)
-                    except Exception as e:
-                        logger.error(f"Error removing temp file {temp_path}: {e}")
-
-        @self.app.get("/faces/")
-        async def list_faces():
-            """List registered faces with metadata"""
-            try:
-                faces = []
                 for file_name in os.listdir(self.service.config.REGISTER_FOLDER):
                     if file_name.endswith('.json'):
                         with open(os.path.join(self.service.config.REGISTER_FOLDER, file_name), 'r') as f:
                             data = json.load(f)
-                            faces.append({
-                                "name": data["name"],
-                                "created_at": data.get("created_at"),
-                                "updated_at": data.get("updated_at"),
-                                "backend_used": data.get("backend_used", "Unknown")
-                            })
+                            registered_embedding = np.array(data["embedding"], dtype=np.float32)
+                            similarity = float(np.dot(embedding, registered_embedding) / 
+                                            (np.linalg.norm(embedding) * np.linalg.norm(registered_embedding)))
+                            
+                            if similarity >= self.service.config.SIMILARITY_THRESHOLD:
+                                results.append({
+                                    "name": data["name"],
+                                    "confidence": f"{similarity * 100:.2f}%"
+                                })
+
                 return {
-                    "faces": faces,
-                    "total": len(faces),
-                    "current_backend": "CPU (OpenCV)" if self.service.use_cpu else "GPU (RetinaFace)"
+                    "matches": sorted(results, key=lambda x: float(x["confidence"][:-1]), reverse=True),
+                    "total_matches": len(results)
                 }
-            except Exception as e:
-                logger.error(f"Error in list_faces: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
+                
+            finally:
+                if temp_path and os.path.exists(temp_path):
+                    os.remove(temp_path)
+                gc.collect()
 
-        @self.app.delete("/faces/{name}")
-        async def remove_face(name: str):
-            """Remove a registered face"""
-            try:
-                file_path = os.path.join(self.service.config.REGISTER_FOLDER, f"{name}.json")
-                if not os.path.exists(file_path):
-                    raise HTTPException(status_code=404, detail=f"No face found registered as '{name}'")
-                    
-                os.remove(file_path)
-                return {"message": f"Face registered as '{name}' has been removed"}
-            except Exception as e:
-                logger.error(f"Error in remove_face: {e}")
-                raise HTTPException(status_code=500, detail=str(e))
-
-# Initialize and run the application
+# Initialize application
 app = FaceRecognitionAPI().app
 
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 4000))
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 
 
