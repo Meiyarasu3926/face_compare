@@ -387,8 +387,6 @@
 
 
 
-
-
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -429,6 +427,8 @@ class FaceRecognitionConfig:
     CLEANUP_INTERVAL = 300  # 5 minutes
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
     ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp'}
+    DEFAULT_IMAGE_SIZE = (800, 800)
+    TEST_IMAGE_PATH = "static/test.jpg"  # Make sure to include a test image in your static folder
 
 class FaceRecognitionService:
     def __init__(self):
@@ -436,10 +436,35 @@ class FaceRecognitionService:
         self.executor = ThreadPoolExecutor(max_workers=self.config.MAX_CONCURRENT_PROCESSES)
         self.embedding_cache = {}
         self.cache_lock = threading.Lock()
+        self.use_cpu = True  # Default to CPU mode
         
         # Create necessary folders
         for folder in [self.config.REGISTER_FOLDER, self.config.TEMP_FOLDER]:
             os.makedirs(folder, exist_ok=True)
+            
+        # Initialize backend detection
+        self._initialize_backend()
+
+    def _initialize_backend(self):
+        """Initialize and determine the appropriate backend for face detection"""
+        try:
+            # Create a small test image if it doesn't exist
+            if not os.path.exists(self.config.TEST_IMAGE_PATH):
+                img = np.zeros((100, 100, 3), dtype=np.uint8)
+                cv2.imwrite(self.config.TEST_IMAGE_PATH, img)
+
+            # Try GPU-based detection
+            _ = DeepFace.represent(
+                img_path=self.config.TEST_IMAGE_PATH,
+                model_name=self.config.MODEL_NAME,
+                enforce_detection=True,
+                detector_backend='retinaface'
+            )
+            self.use_cpu = False
+            logger.info("GPU acceleration enabled - using RetinaFace backend")
+        except Exception as e:
+            self.use_cpu = True
+            logger.warning(f"GPU acceleration not available, falling back to CPU (OpenCV): {e}")
 
     async def cleanup_temp_files(self):
         """Clean up temporary files asynchronously"""
@@ -452,6 +477,7 @@ class FaceRecognitionService:
                         file_creation_time = os.path.getctime(file_path)
                         if current_time - file_creation_time > 3600:  # Remove files older than 1 hour
                             os.unlink(file_path)
+                            logger.debug(f"Cleaned up temporary file: {filename}")
             except Exception as e:
                 logger.error(f"Error in cleanup: {e}")
             await asyncio.sleep(self.config.CLEANUP_INTERVAL)
@@ -481,15 +507,32 @@ class FaceRecognitionService:
         """Calculate face embedding using thread pool"""
         try:
             def _calculate():
-                embedding = DeepFace.represent(
-                    img_path=image_path,
-                    model_name=self.config.MODEL_NAME,
-                    enforce_detection=True,
-                    detector_backend='retinaface'
-                )
-                if embedding and len(embedding) > 0:
-                    return np.array(embedding[0]["embedding"]), None
-                return None, "No face detected in the image"
+                try:
+                    detector_backend = 'opencv' if self.use_cpu else 'retinaface'
+                    embedding = DeepFace.represent(
+                        img_path=image_path,
+                        model_name=self.config.MODEL_NAME,
+                        enforce_detection=True,
+                        detector_backend=detector_backend,
+                        align=True
+                    )
+                    if embedding and len(embedding) > 0:
+                        return np.array(embedding[0]["embedding"]), None
+                    return None, "No face detected in the image"
+                except Exception as calc_error:
+                    # If RetinaFace fails, try falling back to OpenCV
+                    if not self.use_cpu and "RetinaFace" in str(calc_error):
+                        logger.warning("RetinaFace failed, falling back to OpenCV for this request")
+                        embedding = DeepFace.represent(
+                            img_path=image_path,
+                            model_name=self.config.MODEL_NAME,
+                            enforce_detection=True,
+                            detector_backend='opencv',
+                            align=True
+                        )
+                        if embedding and len(embedding) > 0:
+                            return np.array(embedding[0]["embedding"]), None
+                    return None, str(calc_error)
 
             # Execute in thread pool
             embedding, error = await asyncio.get_event_loop().run_in_executor(
@@ -501,7 +544,7 @@ class FaceRecognitionService:
             return None, str(e)
 
     async def save_upload_file(self, upload_file: UploadFile) -> str:
-        """Save uploaded file with validation"""
+        """Save uploaded file with validation and optimization"""
         try:
             self.validate_image(upload_file)
             suffix = os.path.splitext(upload_file.filename)[1]
@@ -510,7 +553,9 @@ class FaceRecognitionService:
             # Optimize image before saving
             image = Image.open(upload_file.file)
             image = image.convert('RGB')
-            image.thumbnail((800, 800))  # Resize if too large
+            image.thumbnail(self.config.DEFAULT_IMAGE_SIZE)  # Resize if too large
+            
+            # Save with optimization
             image.save(temp_file, quality=85, optimize=True)
             
             return temp_file
@@ -520,7 +565,11 @@ class FaceRecognitionService:
 
 class FaceRecognitionAPI:
     def __init__(self):
-        self.app = FastAPI(title="Face Recognition API")
+        self.app = FastAPI(
+            title="Face Recognition API",
+            description="Face Recognition API with CPU/GPU support",
+            version="2.0.0"
+        )
         self.service = FaceRecognitionService()
         
         # Add CORS middleware
@@ -547,6 +596,15 @@ class FaceRecognitionAPI:
         async def read_root():
             return FileResponse('static/index.html')
 
+        @self.app.get("/health")
+        async def health_check():
+            """Health check endpoint"""
+            return {
+                "status": "healthy",
+                "backend": "CPU (OpenCV)" if self.service.use_cpu else "GPU (RetinaFace)",
+                "version": "2.0.0"
+            }
+
         @self.app.post("/register/")
         async def register_face(
             name: str = Form(...),
@@ -569,20 +627,24 @@ class FaceRecognitionAPI:
                     "embedding": embedding.tolist(),
                     "model": self.service.config.MODEL_NAME,
                     "created_at": datetime.now().isoformat(),
-                    "updated_at": datetime.now().isoformat()
+                    "updated_at": datetime.now().isoformat(),
+                    "backend_used": "CPU (OpenCV)" if self.service.use_cpu else "GPU (RetinaFace)"
                 }
                 
                 file_path = os.path.join(self.service.config.REGISTER_FOLDER, f"{name}.json")
                 with open(file_path, "w") as f:
                     json.dump(data, f)
                 
-                return {"message": "Face registered successfully", "name": name}
+                return {
+                    "message": "Face registered successfully",
+                    "name": name,
+                    "backend_used": data["backend_used"]
+                }
                 
             except Exception as e:
                 logger.error(f"Error in register_face: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
             finally:
-                # Clean up temp file
                 if temp_path and os.path.exists(temp_path):
                     try:
                         os.remove(temp_path)
@@ -622,7 +684,8 @@ class FaceRecognitionAPI:
                                 results.append({
                                     "name": data["name"],
                                     "similarity": similarity,
-                                    "confidence": f"{similarity * 100:.2f}%"
+                                    "confidence": f"{similarity * 100:.2f}%",
+                                    "backend_used": "CPU (OpenCV)" if self.service.use_cpu else "GPU (RetinaFace)"
                                 })
                     except Exception as e:
                         logger.error(f"Error processing {file_name}: {e}")
@@ -630,14 +693,14 @@ class FaceRecognitionAPI:
 
                 return {
                     "matches": sorted(results, key=lambda x: x["similarity"], reverse=True),
-                    "total_matches": len(results)
+                    "total_matches": len(results),
+                    "backend_used": "CPU (OpenCV)" if self.service.use_cpu else "GPU (RetinaFace)"
                 }
                 
             except Exception as e:
                 logger.error(f"Error in compare_face: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
             finally:
-                # Clean up temp file
                 if temp_path and os.path.exists(temp_path):
                     try:
                         os.remove(temp_path)
@@ -656,9 +719,14 @@ class FaceRecognitionAPI:
                             faces.append({
                                 "name": data["name"],
                                 "created_at": data.get("created_at"),
-                                "updated_at": data.get("updated_at")
+                                "updated_at": data.get("updated_at"),
+                                "backend_used": data.get("backend_used", "Unknown")
                             })
-                return {"faces": faces, "total": len(faces)}
+                return {
+                    "faces": faces,
+                    "total": len(faces),
+                    "current_backend": "CPU (OpenCV)" if self.service.use_cpu else "GPU (RetinaFace)"
+                }
             except Exception as e:
                 logger.error(f"Error in list_faces: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
@@ -683,21 +751,7 @@ app = FaceRecognitionAPI().app
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 4000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
 
 
 
