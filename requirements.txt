@@ -5,8 +5,3 @@ scikit-learn
 Pillow
 numpy
 opencv-python
-logging
-shutil
-datetime
-asyncio
-concurrent.futures
