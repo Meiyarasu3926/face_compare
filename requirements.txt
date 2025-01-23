@@ -1,7 +1,7 @@
-fastapi
-uvicorn
-deepface
-scikit-learn
-Pillow
-numpy
-opencv-python
+fastapi==0.115.7
+uvicorn==0.34.0
+deepface==0.0.93
+scikit-learn==1.6.1
+Pillow==11.1.0
+numpy==1.21.6
+opencv-python==4.11.0.86
