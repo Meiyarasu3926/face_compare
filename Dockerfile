@@ -4,7 +4,7 @@ FROM python:3.9-slim
 # Set working directory
 WORKDIR /app
 
-RUN sudo apt install nvidia-modprobe
+RUN apt-get install nvidia-modprobe
 
 # Install system dependencies and CUDA requirements
 RUN apt-get update && apt-get install -y \
