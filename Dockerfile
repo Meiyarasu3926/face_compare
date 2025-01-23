@@ -1,42 +1,23 @@
-# Use Python 3.9 with CUDA support
+# Use the official Python image as the base image
 FROM python:3.9-slim
 
-# Set working directory
+# Set the working directory to /app
 WORKDIR /app
 
-RUN apt-get install nvidia-modprobe
-
-# Install system dependencies and CUDA requirements
-RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
-    libglib2.0-0 \
-    wget \
-    gnupg2 \
-    && wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-keyring_1.0-1_all.deb \
-    && dpkg -i cuda-keyring_1.0-1_all.deb \
-    && apt-get update \
-    && apt-get install -y cuda-minimal-build-11-7 \
-    && rm -rf /var/lib/apt/lists/* \
-    && rm cuda-keyring_1.0-1_all.deb
-
-# Set CUDA environment variables
-ENV PATH="/usr/local/cuda/bin:${PATH}"
-ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
-
-# Copy requirements first to leverage Docker cache
+# Copy the requirements file into the container
 COPY requirements.txt .
 
-# Install Python dependencies
+# Install the Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application
+# Copy the entire project into the container
 COPY . .
 
-# Create temp directory for file uploads
-RUN mkdir -p /tmp && chmod 777 /tmp
+# Set the environment variable for the FastAPI application
+ENV PYTHONPATH=/app
 
-# Expose port
+# Expose the port that the FastAPI application will run on
 EXPOSE 4000
 
-# Command to run the application
+# Start the FastAPI application
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "4000"]
