@@ -33,7 +33,7 @@ class FaceRecognitionConfig:
     REGISTER_FOLDER = "registered_faces"
     TEMP_FOLDER = "temp_files"
     MODEL_NAME = "Facenet512"
-    SIMILARITY_THRESHOLD = 0.6
+    SIMILARITY_THRESHOLD = 0.7
     MAX_CONCURRENT_PROCESSES = 4
     CLEANUP_INTERVAL = 300  # 5 minutes
     MAX_FILE_SIZE = 10 * 1024 * 1024  # 10MB
@@ -92,8 +92,8 @@ class FaceRecognitionService:
             def _calculate():
                 embedding = DeepFace.represent(
                     img_path=image_path,
-                    model_name=self.config.MODEL_NAME,
                     enforce_detection=True,
+                    model_name="VGG-Face",
                     detector_backend='retinaface', 
                 )
                 if embedding and len(embedding) > 0:
