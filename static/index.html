@@ -3,43 +3,41 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Face Recognition System</title>
+    <title>Multi-Reference Face Recognition System</title>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/axios/1.6.2/axios.min.js"></script>
 </head>
 <body class="bg-gray-100 min-h-screen">
     <div class="container mx-auto px-4 py-8">
-        <!-- Header -->
         <header class="text-center mb-12">
-            <h1 class="text-4xl font-bold text-gray-800 mb-2">Face Recognition System</h1>
-            <p class="text-gray-600">Register and compare faces with ease</p>
+            <h1 class="text-4xl font-bold text-gray-800 mb-2">Multi-Reference Face Recognition</h1>
+            <p class="text-gray-600">Register multiple reference images for each person</p>
         </header>
 
-        <!-- Main Content -->
         <div class="grid md:grid-cols-2 gap-8">
             <!-- Left Column - Register Face -->
             <div class="bg-white rounded-lg shadow-lg p-6">
-                <h2 class="text-2xl font-semibold mb-4">Register Face</h2>
+                <h2 class="text-2xl font-semibold mb-4">Register Multiple Reference Images</h2>
                 <form id="registerForm" class="space-y-4">
                     <div>
                         <label class="block text-gray-700 mb-2">Name</label>
                         <input type="text" id="registerName" class="w-full px-4 py-2 border rounded-lg focus:outline-none focus:border-blue-500" required>
                     </div>
                     <div>
-                        <label class="block text-gray-700 mb-2">Photo</label>
-                        <div class="border-2 border-dashed border-gray-300 rounded-lg p-4 text-center">
-                            <input type="file" id="registerPhoto" class="hidden" accept="image/*" required>
-                            <label for="registerPhoto" class="cursor-pointer">
-                                <img id="registerPreview" class="mx-auto max-h-48 hidden">
-                                <div id="registerPlaceholder" class="text-gray-500">
-                                    <p>Click to upload or drag and drop</p>
-                                    <p class="text-sm">JPG, PNG or JPEG</p>
+                        <label class="block text-gray-700 mb-2">Reference Photos (Multiple)</label>
+                        <div class="border-2 border-dashed border-gray-300 rounded-lg p-4">
+                            <input type="file" id="registerPhotos" multiple class="hidden" accept="image/*" required>
+                            <label for="registerPhotos" class="cursor-pointer">
+                                <div id="registerPhotosPlaceholder" class="text-center text-gray-500">
+                                    <p>Click to upload or drag and drop multiple images</p>
+                                    <p class="text-sm">JPG, PNG or JPEG (Max 10 images)</p>
                                 </div>
                             </label>
+                            <div id="imagePreviewContainer" class="grid grid-cols-3 gap-2 mt-4"></div>
                         </div>
                     </div>
                     <button type="submit" class="w-full bg-blue-500 text-white py-2 px-4 rounded-lg hover:bg-blue-600 transition duration-200">
-                        Register Face
+                        Register Multiple References
                     </button>
                 </form>
             </div>
@@ -66,31 +64,28 @@
                     </button>
                 </form>
                 <div id="compareResults" class="mt-4 hidden">
-                    <h3 class="font-semibold mb-2">Results:</h3>
+                    <h3 class="font-semibold mb-2">Comparison Results:</h3>
                     <div id="resultsList" class="space-y-2"></div>
                 </div>
             </div>
         </div>
 
-        <!-- Registered Faces List -->
+        <!-- Registered Faces Section -->
         <div class="mt-8 bg-white rounded-lg shadow-lg p-6">
             <h2 class="text-2xl font-semibold mb-4">Registered Faces</h2>
             <div id="facesList" class="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <!-- Faces will be populated here -->
+                <!-- Faces will be dynamically populated here -->
             </div>
         </div>
 
-        <!-- Notifications -->
-        <div id="notification" class="fixed top-4 right-4 max-w-md transform transition-transform duration-300 translate-x-full">
-        </div>
+        <!-- Notification Area -->
+        <div id="notification" class="fixed top-4 right-4 max-w-md transform transition-transform duration-300 translate-x-full"></div>
     </div>
 
     <script>
-        // Automatically determine the API base URL based on the current environment
         const API_URL = window.location.origin;
-        console.log('Using API URL:', API_URL); // For debugging
+        let selectedFiles = []; // Tracks selected files for removal and preview
 
-        // Utility Functions
         function showNotification(message, type = 'success') {
             const notification = document.getElementById('notification');
             notification.className = `fixed top-4 right-4 p-4 rounded-lg text-white ${type === 'success' ? 'bg-green-500' : 'bg-red-500'}`;
@@ -101,126 +96,198 @@
             }, 3000);
         }
 
-        function handleImagePreview(input, previewId, placeholderId) {
-            const preview = document.getElementById(previewId);
-            const placeholder = document.getElementById(placeholderId);
-            
-            if (input.files && input.files[0]) {
+        // Multiple Image Preview and Management
+        document.getElementById('registerPhotos').addEventListener('change', function() {
+            const previewContainer = document.getElementById('imagePreviewContainer');
+            const placeholder = document.getElementById('registerPhotosPlaceholder');
+            previewContainer.innerHTML = ''; // Clear previous previews
+            selectedFiles = []; // Reset selected files
+
+            if (this.files.length > 10) {
+                showNotification('Maximum 10 images allowed', 'error');
+                this.value = ''; // Reset file input
+                return;
+            }
+
+            Array.from(this.files).forEach((file, index) => {
                 const reader = new FileReader();
                 reader.onload = (e) => {
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'relative';
+
+                    const img = document.createElement('img');
+                    img.src = e.target.result;
+                    img.className = 'w-full h-20 object-cover rounded';
+
+                    const removeBtn = document.createElement('button');
+                    removeBtn.innerHTML = '&times;';
+                    removeBtn.className = 'absolute top-0 right-0 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center';
+                    removeBtn.addEventListener('click', () => {
+                        // Remove image from preview and file input
+                        previewContainer.removeChild(wrapper);
+                        selectedFiles = selectedFiles.filter(f => f !== file);
+                        
+                        // Update file input
+                        const dataTransfer = new DataTransfer();
+                        selectedFiles.forEach(f => dataTransfer.items.add(f));
+                        document.getElementById('registerPhotos').files = dataTransfer.files;
+
+                        // Show placeholder if no images
+                        if (previewContainer.children.length === 0) {
+                            placeholder.classList.remove('hidden');
+                        }
+                    });
+
+                    wrapper.appendChild(img);
+                    wrapper.appendChild(removeBtn);
+                    previewContainer.appendChild(wrapper);
+                    selectedFiles.push(file);
+                };
+                reader.readAsDataURL(file);
+            });
+
+            if (selectedFiles.length > 0) {
+                placeholder.classList.add('hidden');
+            } else {
+                placeholder.classList.remove('hidden');
+            }
+        });
+
+        // Register Multiple Face References
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            const name = document.getElementById('registerName').value;
+            const photos = document.getElementById('registerPhotos').files;
+
+            if (photos.length === 0) {
+                showNotification('Please select at least one image', 'error');
+                return;
+            }
+
+            const formData = new FormData();
+            formData.append('name', name);
+            Array.from(photos).forEach((file) => {
+                formData.append('files', file);
+            });
+
+            try {
+                const response = await axios.post(`${API_URL}/register/`, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
+                
+                showNotification(`Registered ${response.data.registered_images.length} images for ${name}`);
+                
+                // Reset form
+                document.getElementById('registerForm').reset();
+                document.getElementById('imagePreviewContainer').innerHTML = '';
+                document.getElementById('registerPhotosPlaceholder').classList.remove('hidden');
+                selectedFiles = []; // Clear selected files
+                
+                // Refresh faces list
+                loadRegisteredFaces();
+            } catch (error) {
+                console.error('Registration error:', error);
+                showNotification(error.response?.data?.detail || 'Registration failed', 'error');
+            }
+        });
+
+        function loadRegisteredFaces() {
+            axios.get(`${API_URL}/faces/`)
+                .then(response => {
+                    const facesList = document.getElementById('facesList');
+                    facesList.innerHTML = ''; // Clear previous faces
+                    
+                    response.data.faces.forEach(face => {
+                        const faceCard = document.createElement('div');
+                        faceCard.className = 'bg-white rounded-lg shadow-md p-4 text-center';
+                        faceCard.innerHTML = `
+                            <p class="font-semibold">${face.name}</p>
+                            <p class="text-sm text-gray-600">Images: ${face.image_count}</p>
+                            <button onclick="removeFace('${face.name}')" class="mt-2 bg-red-500 text-white px-2 py-1 rounded">Remove</button>
+                        `;
+                        facesList.appendChild(faceCard);
+                    });
+                })
+                .catch(error => {
+                    console.error('Error loading faces:', error);
+                    showNotification('Failed to load registered faces', 'error');
+                });
+        }
+
+        function removeFace(name) {
+            axios.delete(`${API_URL}/faces/${name}`)
+                .then(() => {
+                    showNotification(`Removed face for ${name}`);
+                    loadRegisteredFaces();
+                })
+                .catch(error => {
+                    console.error('Error removing face:', error);
+                    showNotification('Failed to remove face', 'error');
+                });
+        }
+
+        document.getElementById('comparePhoto').addEventListener('change', function(event) {
+            const file = event.target.files[0];
+            const preview = document.getElementById('comparePreview');
+            const placeholder = document.getElementById('comparePlaceholder');
+            const compareResults = document.getElementById('compareResults');
+            const resultsList = document.getElementById('resultsList');
+
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
                     preview.src = e.target.result;
                     preview.classList.remove('hidden');
                     placeholder.classList.add('hidden');
                 };
-                reader.readAsDataURL(input.files[0]);
-            }
-        }
-
-        // Load Registered Faces
-        async function loadRegisteredFaces() {
-            try {
-                const response = await axios.get(`${API_URL}/faces/`);
-                const facesList = document.getElementById('facesList');
-                facesList.innerHTML = '';
-                
-                response.data.faces.forEach(face => {
-                    const faceElement = document.createElement('div');
-                    faceElement.className = 'bg-gray-50 p-4 rounded-lg flex justify-between items-center';
-                    faceElement.innerHTML = `
-                        <span class="font-medium">${face.name}</span>
-                        <button onclick="deleteFace('${face.name}')" class="text-red-500 hover:text-red-700">
-                            Delete
-                        </button>
-                    `;
-                    facesList.appendChild(faceElement);
-                });
-            } catch (error) {
-                console.error('Error loading faces:', error);
-                showNotification(error.response?.data?.detail || 'Error loading faces', 'error');
-            }
-        }
-
-        // Delete Face
-        async function deleteFace(name) {
-            if (confirm(`Are you sure you want to delete ${name}?`)) {
-                try {
-                    await axios.delete(`${API_URL}/faces/${name}`);
-                    showNotification(`Successfully deleted ${name}`);
-                    loadRegisteredFaces();
-                } catch (error) {
-                    console.error('Error deleting face:', error);
-                    showNotification(error.response?.data?.detail || 'Error deleting face', 'error');
-                }
-            }
-        }
-
-        // Register Face
-        document.getElementById('registerForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const formData = new FormData();
-            formData.append('name', document.getElementById('registerName').value);
-            formData.append('file', document.getElementById('registerPhoto').files[0]);
-
-            try {
-                await axios.post(`${API_URL}/register/`, formData);
-                showNotification('Face registered successfully');
-                loadRegisteredFaces();
-                e.target.reset();
-                document.getElementById('registerPreview').classList.add('hidden');
-                document.getElementById('registerPlaceholder').classList.remove('hidden');
-            } catch (error) {
-                console.error('Error registering face:', error);
-                showNotification(error.response?.data?.detail || 'Error registering face', 'error');
+                reader.readAsDataURL(file);
             }
         });
 
-        // Compare Face
         document.getElementById('compareForm').addEventListener('submit', async (e) => {
             e.preventDefault();
+            const comparePhoto = document.getElementById('comparePhoto');
+            const compareResults = document.getElementById('compareResults');
+            const resultsList = document.getElementById('resultsList');
+
+            if (!comparePhoto.files.length) {
+                showNotification('Please select a photo to compare', 'error');
+                return;
+            }
+
             const formData = new FormData();
-            formData.append('file', document.getElementById('comparePhoto').files[0]);
+            formData.append('file', comparePhoto.files[0]);
 
             try {
-                const response = await axios.post(`${API_URL}/compare/`, formData);
-                const resultsList = document.getElementById('resultsList');
-                resultsList.innerHTML = '';
+                const response = await axios.post(`${API_URL}/compare/`, formData, {
+                    headers: { 'Content-Type': 'multipart/form-data' }
+                });
                 
-                if (response.data.matches && response.data.matches.length > 0) {
-                    response.data.matches.forEach(match => {
-                        const matchElement = document.createElement('div');
-                        matchElement.className = 'bg-gray-50 p-3 rounded-lg';
-                        matchElement.innerHTML = `
-                            <div class="flex justify-between">
-                                <span class="font-medium">${match.name}</span>
-                                <span class="text-blue-500">${match.confidence}</span>
-                            </div>
-                        `;
-                        resultsList.appendChild(matchElement);
-                    });
+                resultsList.innerHTML = ''; // Clear previous results
+                compareResults.classList.remove('hidden');
+
+                if (response.data.total_matches === 0) {
+                    resultsList.innerHTML = '<p class="text-gray-600">No matches found</p>';
                 } else {
-                    resultsList.innerHTML = '<div class="bg-yellow-50 p-3 rounded-lg">No matching faces found</div>';
+                    response.data.matches.forEach(match => {
+                        const matchItem = document.createElement('div');
+                        matchItem.className = 'bg-green-100 p-3 rounded';
+                        matchItem.innerHTML = `
+                            <p class="font-semibold">${match.name}</p>
+                            <p>Similarity: ${match.confidence}</p>
+                        `;
+                        resultsList.appendChild(matchItem);
+                    });
                 }
-                
-                document.getElementById('compareResults').classList.remove('hidden');
             } catch (error) {
-                console.error('Error comparing face:', error);
-                showNotification(error.response?.data?.detail || 'Error comparing face', 'error');
+                console.error('Comparison error:', error);
+                showNotification(error.response?.data?.detail || 'Comparison failed', 'error');
             }
-        });
-
-        // Image Preview Handlers
-        document.getElementById('registerPhoto').addEventListener('change', function() {
-            handleImagePreview(this, 'registerPreview', 'registerPlaceholder');
-        });
-
-        document.getElementById('comparePhoto').addEventListener('change', function() {
-            handleImagePreview(this, 'comparePreview', 'comparePlaceholder');
         });
 
         // Initialize application
         document.addEventListener('DOMContentLoaded', () => {
             loadRegisteredFaces();
-            console.log('Application initialized');
         });
     </script>
 </body>
