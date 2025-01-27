@@ -1,4 +1,3 @@
-
 from fastapi import FastAPI, File, Form, UploadFile, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -196,7 +195,7 @@ class FaceRecognitionAPI:
 
         @self.app.post("/compare/")
         async def compare_face(file: UploadFile = File(...)):
-            """Compare face with optimized matching, returning highest similarity per person"""
+            """Compare face with optimized matching, returning all similarity scores regardless of threshold"""
             try:
                 # Temporary save of uploaded file
                 temp_suffix = os.path.splitext(file.filename)[1]
@@ -208,7 +207,7 @@ class FaceRecognitionAPI:
                 self.service.validate_image(file)
                 image = Image.open(file.file)
                 image = image.convert('RGB')
-                image.thumbnail((800, 800))  # Resize if too large
+                image.thumbnail((800, 800))
                 image.save(temp_path, quality=85, optimize=True)
         
                 # Calculate embedding for uploaded image
@@ -240,16 +239,15 @@ class FaceRecognitionAPI:
                             )[0][0]
                         )
         
-                        # Keep track of the most similar image for this person
-                        if similarity >= self.service.config.SIMILARITY_THRESHOLD:
-                            if (best_match is None or 
-                                similarity > best_match['similarity']):
-                                best_match = {
-                                    "name": data["name"],
-                                    "similarity": similarity,
-                                    "confidence": f"{similarity * 100:.2f}%",
-                                    "image": data["images"][idx]
-                                }
+                        # Keep track of the most similar image, regardless of threshold
+                        if best_match is None or similarity > best_match['similarity']:
+                            best_match = {
+                                "name": data["name"],
+                                "similarity": similarity,
+                                "confidence": f"{similarity * 100:.2f}%",
+                                "image": data["images"][idx],
+                                "exceeds_threshold": similarity >= self.service.config.SIMILARITY_THRESHOLD
+                            }
         
                     # Add best match for this person to results
                     if best_match:
@@ -267,12 +265,13 @@ class FaceRecognitionAPI:
         
                 return {
                     "matches": sorted_results,
-                    "total_matches": len(sorted_results)
+                    "total_matches": len([r for r in sorted_results if r["exceeds_threshold"]]),
+                    "threshold": self.service.config.SIMILARITY_THRESHOLD
                 }
             except Exception as e:
                 logger.error(f"Error in compare_face: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
-
+    
         @self.app.get("/faces/")
         async def list_faces():
             """List registered faces"""
