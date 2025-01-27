@@ -340,64 +340,90 @@
 
         // Comparison form submission
         document.getElementById('compareForm').addEventListener('submit', async (e) => {
-            e.preventDefault();
-            const comparePhoto = document.getElementById('comparePhoto');
-            const compareResults = document.getElementById('compareResults');
-            const resultsList = document.getElementById('resultsList');
-            const compareSubmitBtn = document.getElementById('compareSubmitBtn');
-            const compareLoading = document.getElementById('compareLoading');
+        e.preventDefault();
+        const comparePhoto = document.getElementById('comparePhoto');
+        const compareResults = document.getElementById('compareResults');
+        const resultsList = document.getElementById('resultsList');
+        const compareSubmitBtn = document.getElementById('compareSubmitBtn');
+        const compareLoading = document.getElementById('compareLoading');
 
-            if (!comparePhoto.files.length) {
-                showNotification('Please select a photo to compare', 'error');
-                return;
-            }
+        if (!comparePhoto.files.length) {
+            showNotification('Please select a photo to compare', 'error');
+            return;
+        }
 
-            // Disable submit button and show loading
-            compareSubmitBtn.disabled = true;
-            compareSubmitBtn.classList.add('opacity-50');
-            compareLoading.classList.remove('hidden');
-            compareLoading.classList.add('flex');
+        // Disable submit button and show loading
+        compareSubmitBtn.disabled = true;
+        compareSubmitBtn.classList.add('opacity-50');
+        compareLoading.classList.remove('hidden');
+        compareLoading.classList.add('flex');
 
-            const formData = new FormData();
-            formData.append('file', comparePhoto.files[0]);
+        const formData = new FormData();
+        formData.append('file', comparePhoto.files[0]);
 
-            try {
-                const response = await axios.post(`${API_URL}/compare/`, formData, {
-                    headers: { 'Content-Type': 'multipart/form-data' }
+        try {
+            const response = await axios.post(`${API_URL}/compare/`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+
+            resultsList.innerHTML = '';
+            compareResults.classList.remove('hidden');
+
+            if (response.data.matches.length === 0) {
+                resultsList.innerHTML = '<p class="text-gray-600">No registered faces found to compare against.</p>';
+            } else {
+                // Display threshold info
+                const thresholdInfo = document.createElement('div');
+                thresholdInfo.className = 'mb-4 text-sm text-gray-600';
+                thresholdInfo.innerHTML = `Matching threshold: ${response.data.threshold * 100}%`;
+                resultsList.appendChild(thresholdInfo);
+
+                // Display all results with their confidence scores
+                response.data.matches.forEach(match => {
+                    const matchItem = document.createElement('div');
+                    matchItem.className = `p-3 rounded mb-2 ${
+                        match.exceeds_threshold ? 'bg-green-100' : 'bg-gray-100'
+                    }`;
+                    matchItem.innerHTML = `
+                        <p class="font-semibold">${match.name}</p>
+                        <p>Similarity: ${match.confidence}</p>
+                        <p class="text-sm ${
+                            match.exceeds_threshold ? 'text-green-600' : 'text-gray-600'
+                        }">
+                            ${match.exceeds_threshold ? 'Match' : 'Below matching threshold'}
+                        </p>
+                    `;
+                    resultsList.appendChild(matchItem);
                 });
-                
-                resultsList.innerHTML = '';
-                compareResults.classList.remove('hidden');
 
+                // Add guidance if no matches above threshold
                 if (response.data.total_matches === 0) {
-                    resultsList.innerHTML = '<p class="text-gray-600">No matches found! <br> \
-                        * Check image already registered <br>\
-                        * Upload high quality image <br>\
-                        * Try white background <br>\
-                        * Check face alignment <br> \
-                        * Upload another image</p>'
-                } else {
-                    response.data.matches.forEach(match => {
-                        const matchItem = document.createElement('div');
-                        matchItem.className = 'bg-green-100 p-3 rounded';
-                        matchItem.innerHTML = `
-                            <p class="font-semibold">${match.name}</p>
-                            <p>Similarity: ${match.confidence}</p>
-                        `;
-                        resultsList.appendChild(matchItem);
-                    });
+                    const guidance = document.createElement('div');
+                    guidance.className = 'mt-4 text-sm text-gray-600';
+                    guidance.innerHTML = `
+                        <p>No matches above threshold. Tips to improve matching:</p>
+                        <ul class="list-disc ml-4 mt-2">
+                            <li>Check if face is already registered</li>
+                            <li>Upload a higher quality image</li>
+                            <li>Try with better lighting</li>
+                            <li>Ensure face is clearly visible</li>
+                            <li>Check face alignment</li>
+                        </ul>
+                    `;
+                    resultsList.appendChild(guidance);
                 }
-            } catch (error) {
-                console.error('Comparison error:', error);
-                showNotification(error.response?.data?.detail || 'Comparison failed', 'error');
-            } finally {
-                // Re-enable submit button and hide loading
-                compareSubmitBtn.disabled = false;
-                compareSubmitBtn.classList.remove('opacity-50');
-                compareLoading.classList.add('hidden');
-                compareLoading.classList.remove('flex');
             }
-        });
+        } catch (error) {
+            console.error('Comparison error:', error);
+            showNotification(error.response?.data?.detail || 'Comparison failed', 'error');
+        } finally {
+            // Re-enable submit button and hide loading
+            compareSubmitBtn.disabled = false;
+            compareSubmitBtn.classList.remove('opacity-50');
+            compareLoading.classList.add('hidden');
+            compareLoading.classList.remove('flex');
+        }
+    });
 
         // Close results button
         document.getElementById('closeResults').addEventListener('click', () => {
